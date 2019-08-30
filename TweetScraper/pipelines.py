@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from scrapy.exceptions import DropItem
-from scrapy.conf import settings
+from scrapy.utils.project import get_project_settings
 import logging
 import pymongo
 import json
@@ -13,7 +13,7 @@ from mysql.connector import errorcode
 from TweetScraper.items import Tweet, User
 from TweetScraper.utils import mkdirs
 
-
+settings = get_project_settings()
 logger = logging.getLogger(__name__)
 
 class SaveToMongoPipeline(object):
