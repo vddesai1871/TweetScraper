@@ -6,6 +6,7 @@ import re
 import json
 import time
 import logging
+import os
 try:
     from urllib import quote  # Python 2.X
 except ImportError:
@@ -31,8 +32,20 @@ class TweetScraper(CrawlSpider):
             self.url = self.url + "&f=tweets"
 
         self.url = self.url + "&q=%s&src=typed&max_position=%s"
+        self.save_latest = True
+        self.last_query_time = None
+        try:
+            if os.path.exists("time.txt"):
+                with open("time.txt", "r+") as f:
+                        data = f.read()
+                        if data:
+                            self.last_query_time =  datetime.strptime(data, '%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            print(e)
+            print("file error")
 
         self.crawl_user = crawl_user
+        self.stop_crawling = False
 
     def start_requests(self):
         url = self.url % (quote(self.query), '')
@@ -41,8 +54,13 @@ class TweetScraper(CrawlSpider):
     def parse_page(self, response):
         # inspect_response(response, self)
         # handle current page
+        if self.stop_crawling is True:
+            print("We are done.")
+            return
         data = json.loads(response.body.decode("utf-8"))
         for item in self.parse_tweets_block(data['items_html']):
+            if item is False:
+                raise StopIteration()
             yield item
 
         # get next page
@@ -104,63 +122,72 @@ class TweetScraper(CrawlSpider):
                     tweet['nbr_reply'] = int(nbr_reply[0])
                 else:
                     tweet['nbr_reply'] = 0
-
-                tweet['datetime'] = datetime.fromtimestamp(int(
+                tweet_date_time = datetime.fromtimestamp(int(
                     item.xpath('.//div[@class="stream-item-header"]/small[@class="time"]/a/span/@data-time').extract()[
-                        0])).strftime('%Y-%m-%d %H:%M:%S')
+                        0]))
+                tweet['datetime'] = tweet_date_time.strftime('%Y-%m-%d %H:%M:%S')
+                if self.save_latest:
+                    with open("time.txt", "w+") as f:
+                        f.write(tweet['datetime'])
+                        print("YES")
+                    self.save_latest = False
+                if self.last_query_time:
+                    if tweet_date_time < self.last_query_time:
+                        self.stop_crawling = True
+                    else:
+                        print("new tweet")
 
-                ### get photo
-                has_cards = item.xpath('.//@data-card-type').extract()
-                if has_cards and has_cards[0] == 'photo':
-                    tweet['has_image'] = True
-                    tweet['images'] = item.xpath('.//*/div/@data-image-url').extract()
-                elif has_cards:
-                    logger.debug('Not handle "data-card-type":\n%s' % item.xpath('.').extract()[0])
+                        ### get photo
+                        has_cards = item.xpath('.//@data-card-type').extract()
+                        if has_cards and has_cards[0] == 'photo':
+                            tweet['has_image'] = True
+                            tweet['images'] = item.xpath('.//*/div/@data-image-url').extract()
+                        elif has_cards:
+                            logger.debug('Not handle "data-card-type":\n%s' % item.xpath('.').extract()[0])
 
-                ### get animated_gif
-                has_cards = item.xpath('.//@data-card2-type').extract()
-                if has_cards:
-                    if has_cards[0] == 'animated_gif':
-                        tweet['has_video'] = True
-                        tweet['videos'] = item.xpath('.//*/source/@video-src').extract()
-                    elif has_cards[0] == 'player':
-                        tweet['has_media'] = True
-                        tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
-                    elif has_cards[0] == 'summary_large_image':
-                        tweet['has_media'] = True
-                        tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
-                    elif has_cards[0] == 'amplify':
-                        tweet['has_media'] = True
-                        tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
-                    elif has_cards[0] == 'summary':
-                        tweet['has_media'] = True
-                        tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
-                    elif has_cards[0] == '__entity_video':
-                        pass  # TODO
-                        # tweet['has_media'] = True
-                        # tweet['medias'] = item.xpath('.//*/div/@data-src').extract()
-                    else:  # there are many other types of card2 !!!!
-                        logger.debug('Not handle "data-card2-type":\n%s' % item.xpath('.').extract()[0])
+                        ### get animated_gif
+                        has_cards = item.xpath('.//@data-card2-type').extract()
+                        if has_cards:
+                            if has_cards[0] == 'animated_gif':
+                                tweet['has_video'] = True
+                                tweet['videos'] = item.xpath('.//*/source/@video-src').extract()
+                            elif has_cards[0] == 'player':
+                                tweet['has_media'] = True
+                                tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
+                            elif has_cards[0] == 'summary_large_image':
+                                tweet['has_media'] = True
+                                tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
+                            elif has_cards[0] == 'amplify':
+                                tweet['has_media'] = True
+                                tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
+                            elif has_cards[0] == 'summary':
+                                tweet['has_media'] = True
+                                tweet['medias'] = item.xpath('.//*/div/@data-card-url').extract()
+                            elif has_cards[0] == '__entity_video':
+                                pass  # TODO
+                                # tweet['has_media'] = True
+                                # tweet['medias'] = item.xpath('.//*/div/@data-src').extract()
+                            else:  # there are many other types of card2 !!!!
+                                logger.debug('Not handle "data-card2-type":\n%s' % item.xpath('.').extract()[0])
 
-                is_reply = item.xpath('.//div[@class="ReplyingToContextBelowAuthor"]').extract()
-                tweet['is_reply'] = is_reply != []
+                        is_reply = item.xpath('.//div[@class="ReplyingToContextBelowAuthor"]').extract()
+                        tweet['is_reply'] = is_reply != []
 
-                is_retweet = item.xpath('.//span[@class="js-retweet-text"]').extract()
-                tweet['is_retweet'] = is_retweet != []
+                        is_retweet = item.xpath('.//span[@class="js-retweet-text"]').extract()
+                        tweet['is_retweet'] = is_retweet != []
 
-                tweet['user_id'] = item.xpath('.//@data-user-id').extract()[0]
-                print(tweet['user_id'])
-                yield tweet
+                        tweet['user_id'] = item.xpath('.//@data-user-id').extract()[0]
+                        yield tweet
 
-                if self.crawl_user:
-                    ### get user info
-                    user = User()
-                    user['ID'] = tweet['user_id']
-                    user['name'] = item.xpath('.//@data-name').extract()[0]
-                    user['screen_name'] = item.xpath('.//@data-screen-name').extract()[0]
-                    user['avatar'] = \
-                        item.xpath('.//div[@class="content"]/div[@class="stream-item-header"]/a/img/@src').extract()[0]
-                    yield user
+                        if self.crawl_user:
+                            ### get user info
+                            user = User()
+                            user['ID'] = tweet['user_id']
+                            user['name'] = item.xpath('.//@data-name').extract()[0]
+                            user['screen_name'] = item.xpath('.//@data-screen-name').extract()[0]
+                            user['avatar'] = \
+                                item.xpath('.//div[@class="content"]/div[@class="stream-item-header"]/a/img/@src').extract()[0]
+                            yield user
             except:
                 logger.error("Error tweet:\n%s" % item.xpath('.').extract()[0])
                 # raise
